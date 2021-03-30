@@ -587,3 +587,4 @@ def shell_script(script, terminate_match=None):
                         raise TerminateTest
         runner.qemu.on_output.append(handle_output)
     return setup_call_on_line
+
