@@ -690,3 +690,16 @@ procdump(void)
     printf("\n");
   }
 }
+
+struct VMA vma_list[NVMA];
+struct VMA* vma_alloc() {
+  for (int i = 0; i < NVMA; i++) {
+    acquire(&vma_list[i].lock);
+    if (vma_list[i].length == 0) {
+      return &vma_list[i];  // no release lock
+    } else {
+      release(&vma_list[i].lock);
+    }
+  }
+  panic("No enough vma");
+} 

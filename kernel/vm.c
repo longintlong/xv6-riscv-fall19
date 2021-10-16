@@ -3,6 +3,9 @@
 #include "memlayout.h"
 #include "elf.h"
 #include "riscv.h"
+#include "proc.h"
+#include "file.h"
+#include "fcntl.h"
 #include "defs.h"
 #include "fs.h"
 
@@ -450,4 +453,63 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+int
+mmap_handler(uint64 va, uint64 scause) {
+  struct proc *p = myproc();
+  struct VMA *vma = p->vma;
+  while(vma) {
+    if (va >= vma->start && va < vma->end) {
+      break;
+    }
+    vma = vma->next;
+  }
+  if(!vma) return -1;
+  if(scause == 13 && !(vma->permission & PTE_R) return -2;
+  if(scause == 15 && !(vma->permission & PTE_W) return -3;
+
+  va = PGROUNDDOWN(va);
+  char *mem = (char *)kalloc();
+  if(mem == 0) return -4;
+  memset(mem, 0, PGSIZE);
+
+  if(mappages(p->pagetable, va, vma->length, mem, vma->permission) != 0) {
+    kfree(mem); // must free the memory
+    return -5;
+  }
+
+  struct file *f = vma->file;
+  ilock(f->ip);
+  readi(f->ip, 0, (uint64)mem, vma->off + va - vma->start, PGSIZE);
+  iunlock(f->ip);
+
+  return 0;
+}
+
+void writeback(struct VMA* vma, uint64 addr, int len){
+  // judge writeable or not
+  if((!(vma->permission & PTE_W)) || (!(vma->flags & MAP_SHARED))) return;
+  // align pg
+  if((addr % PGSIZE) != 0) panic("not align address");
+
+  struct file *f = vma->file;
+  int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
+  int i = 0, ni, r;
+  while(i < len) {
+    ni = len - i;
+    if(ni > max)
+      ni = max;
+    begin_op(f->ip->dev);
+    ilock(f->ip);
+    if((r = writei(f->ip, 1, addr+i, vma->off+i, ni)) <= 0) {
+      
+    }
+
+    end_op(f->ip->dev);
+  } 
+
+
+
+  return 0;
 }

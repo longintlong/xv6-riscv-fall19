@@ -483,3 +483,117 @@ sys_pipe(void)
   return 0;
 }
 
+// void* mmap(void *addr, size_t length, int prot, int flags,
+//           int fd, off_t offset);
+// in default, offset and addr is zero
+uint64
+sys_mmap(void) {
+  uint64 addr;
+  int length, prot, flags, fd, offset;
+  argaddr(0, &addr);
+  argint(1, &length);
+  argint(2, &prot);
+  argint(3, &flags);
+  argint(4, &fd);
+  argint(5, &offset);
+
+  if(addr != 0) {
+    panic("addr must be 0");
+  }
+  if(offset != 0) {
+    panic("offset must be 0");
+  }
+
+  struct proc *p = myproc();
+  struct file *f = p->ofile[fd];
+
+  int pte_flag = PTE_U;
+  if (prot & PROT_WRITE) {
+    // TODO: try (flags & MAP_SHARED)
+    if (!f->writable && !(flags & MAP_PRIVATE)) return -1;  
+    pte_flag |= PTE_W;
+  }
+  if (prot & PROT_READ) {
+    if (!f->readable) return -1;
+    pte_flag |= PTE_R;
+  }
+  if (prot & PROT_EXEC) {
+    pte_flag |= PTE_X;
+  }
+
+  struct VMA* vma = vma_alloc();
+  vma->permission = pte_flag;
+  vma->length = length;
+  vma->off = offset;
+  vma->flags = flags;
+  vma->file = f;
+
+  filedup(f); // add file ref count
+  struct VMA *pvma = p->vma;
+  if (pvma == 0) {
+    vma->start = VMA_START;
+    vma->end = VMA_START + length;
+    p->vma = vma;
+  } else {
+    while (pvma->next) pvma = pvma->next;
+    // last vma
+    vma->start = PGROUNDUP(pvma->end);
+    vma->end = vma->start + length;
+    pvma->next = vma;
+  }
+  // TODO 
+  vma->next = 0;
+
+  addr = vma->start;
+  print("mmap vm start [%p, %p)", vma->start, vma->end);
+  release(&vma->lock);
+  return addr;
+}
+
+uint64
+sys_munmap(void) {
+  uint64 addr;
+  int length;
+  argaddr(0, &addr);
+  argint(1, &length);
+
+  struct proc *p = myproc();
+  struct VMA *vma = p->vma;
+  struct VMA *pre = 0;
+  while(vma) {
+    if(addr >= vma->start && addr < vma->end) break;
+    pre = vma;
+    vma = vma->next;
+  }
+  if(vma == 0) return -1; // not mapped addr
+  if(addr != vma->start && addr + length != vma->end) {
+    panic("punch a hole in the middle of a region")
+  }
+  printf("munmap addr %p and length is %d", addr, length);
+  printf("munmap addr [%p, %p)", addr, addr + length);
+
+  if(addr == vma->start) {
+    writeback(vma, addr, length);
+    uvmunmap(p->pagetable, addr, length, 1);
+    if(length == vma->length) {
+      fileclose(vma->file);
+      if(pre == 0) {
+        p->vma=vma->next;
+      } else {
+        pre->next = vma->next;
+        vma->next = 0; // why
+      }
+      acquire(&vma->lock);
+      vma->length = 0;
+      release(&vma->lock);
+    } else {
+      vma->start += length;
+      vma->off += length;
+      vma->length -= length;
+    }
+  } else {
+    vma->length -= length;
+    vma->end -= length;
+  }
+  return 0;
+}
